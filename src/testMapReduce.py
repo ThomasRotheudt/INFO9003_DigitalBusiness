@@ -1,21 +1,57 @@
-import re
-from functools import reduce
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import split, explode, col, regexp_replace, lower
+from datasets import load_dataset
 
-def map_function(word):
-    return (word, 1)
+# Create a SparkSession
+spark = SparkSession.builder \
+    .appName("WordFrequencyCount") \
+    .getOrCreate()
 
-def reduce_function(acc, item):
-    acc[item[0]] += item[1]
-    return acc
+# Specify the name of the dataset
+dataset_name = "stanfordnlp/imdb"
 
-def word_counter(text):
-    words = [re.sub(r'\W+', ' ', word).lower() for word in re.split(r'\s+', text) if word]
-    mapped_words = list(map(map_function, words))
-    return reduce(reduce_function, mapped_words, dict.fromkeys(words, 0))
+# Load the dataset using the `datasets` library
+# Note: You need to install the `datasets` library if you haven't already
 
-text = "This is a sample text. This text is for demonstrating the word counter program. The program counts the frequency of a word in a given text using map reduce."
+dataset = load_dataset(dataset_name)
 
-word_count = word_counter(text)
+# Convert the dataset to a PySpark DataFrame
+# Assuming the text is stored in a column named 'text'
+df = spark.createDataFrame(dataset['train'])
 
-for word, count in word_count.items():
-    print(f"{word}: {count}")
+# Remove punctuations and convert to lowercase
+df = df.withColumn("text", lower(regexp_replace(col("text"), "[^a-zA-Z0-9\-]+", " ")))
+
+# Tokenize the text into words
+df = df.withColumn("words", split(col("text"), " "))
+
+# Explode the array of words into separate rows
+df = df.select(explode(col("words")).alias("word"))
+
+# Filter out empty words
+df = df.filter(col("word") != "")
+
+# Collect all words into a list
+words_list = df.select("word").rdd.flatMap(lambda x: x).collect()
+
+# Initialize an empty dictionary to store the word frequencies
+word_freq = {}
+
+# Iterate through every word one by one
+for word in words_list:
+    # If the word is not in the dictionary, add it with a count of 1
+    if word not in word_freq:
+        word_freq[word] = 1
+    # If the word is already in the dictionary, increment its count
+    else:
+        word_freq[word] += 1
+
+# Print the word frequencies
+for word, freq in word_freq.items():
+    if freq > 300:
+        print(word, freq)
+
+# Stop the SparkSession
+spark.stop()
+
+
