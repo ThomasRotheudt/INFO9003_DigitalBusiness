@@ -1,24 +1,47 @@
+"""
+INFO9003  : Advanced Topics in Digital Business 
+Project 2 : News Article Crawler
+Author    : Maxime Deravet, Thomas Rotheudt, Robin Fombonne
+Date      : 2024-04-17
+"""
+
 from bs4             import BeautifulSoup
 from pymongo         import MongoClient
 from multiprocessing import Pool
 import progressbar
 import datetime
 import requests
-import time
-import sys
+
 
 #----------------------------------------- 
 #Utils functions
 #----------------------------------------- 
 def saveToMongo(collName, data):  
+    """
+    Save the data in the collection collName of the MongoDB database CrawlerArticles
+    collName : str : name of the collection to save the data
+    data     : list: list of dictionaries to save in the collection
+    """
     clt  = MongoClient('localhost', 27017)
     db   = clt['CrawlerArticles']
     coll = db[collName]
     coll.insert_many(data)
 
 def save_soup_to_file(soup, filename):
+    """
+    save the soup in a file
+    """
     with open(filename, 'w', encoding='utf-8') as file:
         file.write(str(soup))
+
+def saveSoupsToRepo(soups, repo, name):
+    """
+    Debugging function to save the list of soup in one existing repository
+    """
+    print("Saving soups to repository...")
+    for i, soup in enumerate(soups):
+        filename = f"{repo}/{name}_{i}.html"
+        save_soup_to_file(soup, filename)
     
 def getBs4ElementOrEmptyString(soup, tag, values):
     try:
@@ -28,17 +51,35 @@ def getBs4ElementOrEmptyString(soup, tag, values):
         return ""
 
 def extract_title(soup):
+    """
+    extract the title of the article for CNBC source
+    """
+    meta_tag = soup.find('meta', property='og:title')           # Find the <meta> tag with property='og:title'
     
-    
-    # Find the <meta> tag with property='og:title'
-    meta_tag = soup.find('meta', property='og:title')
-    
-    # Extract the content attribute if the meta tag is found
-    if meta_tag and meta_tag.has_attr('content'):
+    if meta_tag and meta_tag.has_attr('content'):               # Extract the content attribute if the meta tag is found
         return meta_tag['content']
     else:
-        # Return a default or empty string if no title is found
         return "No title found"
+    
+def extract_author(soup):
+    meta_tag = soup.find('meta', attrs={'name': 'author'})      # Find the <meta> tag with name='author'
+    
+    if meta_tag and meta_tag.has_attr('content'):               # Extract the content attribute if the meta tag is found
+        return meta_tag['content']
+    else:
+        return "No author found"
+    
+def extract_date(soup):
+    
+    meta_tag = soup.find('meta', itemprop='dateCreated')        # Find the <meta> tag with itemprop='dateCreated'
+    
+    if meta_tag and meta_tag.has_attr('content'):
+        date_string = meta_tag['content'] 
+        date_obj = datetime.datetime.strptime(date_string, '%Y-%m-%dT%H:%M:%S%z')  # Parse the date using datetime
+        formatted_date = date_obj.strftime('%Y/%m/%d')                             # Format the date as 'YYYY/MM/DD'    
+        return formatted_date
+    else:
+        return "No date found"
 
 def requestLinkWithRetry(link):
     res = None
@@ -51,41 +92,54 @@ def requestLinkWithRetry(link):
             tries += 1
     return None
 
-def saveSoupsToRepo(soups, repo, name):
-    print("Saving soups to repository...")
-    for i, soup in enumerate(soups):
-        filename = f"{repo}/{name}_{i}.html"
-        save_soup_to_file(soup, filename)
-
-
 def clean_content(tags):
-    # Combine text from all <p> tags and add a newline after each
-    combined_text = '\n'.join(tag.get_text() for tag in tags if tag)
+    """
+    Remove unwanted balises and words from the content of the article
+    Keep only from the beginning of the article to the end of the article
+    """
+    start_collecting = False                        # Flag to start collecting text 
+    collected_texts = []                            # List to store collected text
+    
+    for tag in tags:
+        
+        if tag.attrs.get('id') == 'MainContent':    # Check if we have reached the "MainContent" marker
+            start_collecting = True
+            continue                                # Skip the "MainContent" tag itself
+        
+        # If we are past the "MainContent" tag, collect the text
+        if start_collecting:
+            text = tag.get_text(strip=True)
+            if text:                                # Ensure not adding empty strings
+                collected_texts.append(text)
+    
+    # Combine all collected texts with a newline
+    combined_text = '\n'.join(collected_texts)
     
     return combined_text
+
     
 #----------------------------------------- 
 #Crawler functions   
 #-----------------------------------------     
         
 def getPage(y, month, d):
+    """
+    getting index page of the CNBC archive
+    """
     print("Getting the full page...")
     URL = f'https://www.cnbc.com/site-map/articles/{y}/{month}/{d}/'
     page = requestLinkWithRetry(URL)    
     soup = BeautifulSoup(page.content, 'html.parser')
     return soup
     
-def getArticlesLinks(soup):
-	#save_soup_to_file(soup, "soupIndex.html")
-	
+def getArticlesLinks(soup):	
 	links = []
 	ul = soup.findAll("a", {"class": 'SiteMapArticleList-link'})   
 
-	#save_soup_to_file(ul, "ul.html")
-	print("Nombre d'article trouvé : ", len(ul))
+	print("Number of articles found : ", len(ul))
 	for a in ul:  # Iterate directly over each 'a' element found
 		links.append(a['href'])
-	#save_soup_to_file(links, "links.html")
+	save_soup_to_file(links, "links.html")
 	return links
 	
 def getArticlesFromLinks(links):
@@ -102,54 +156,29 @@ def getArticlesFromLinks(links):
         if(not result is None):
             soups.append(BeautifulSoup(result.content, 'html.parser'))
     
-    #save individual soup in soup repository
-    #saveSoupsToRepo(soups, "soups", "soup")
     return soups
 
-def extract_author(soup):
-    # Create a BeautifulSoup object
+
     
-    # Find the <meta> tag with name='author'
-    meta_tag = soup.find('meta', attrs={'name': 'author'})
-    
-    # Extract the content attribute if the meta tag is found
-    if meta_tag and meta_tag.has_attr('content'):
-        return meta_tag['content']
-    else:
-        # Return a default or empty string if no author is found
-        return "No author found"
-    
-def extract_date(soup):
-    # Find the <meta> tag with itemprop='dateCreated'
-    meta_tag = soup.find('meta', itemprop='dateCreated')
-    
-    if meta_tag and meta_tag.has_attr('content'):
-        # Parse the date string
-        date_string = meta_tag['content']
-        # Parse the date using datetime
-        date_obj = datetime.datetime.strptime(date_string, '%Y-%m-%dT%H:%M:%S%z')
-        # Format the date as 'YYYY/MM/DD'
-        formatted_date = date_obj.strftime('%Y/%m/%d')
-        return formatted_date
-    else:
-        return "No date found"
-    
-def getFormattedArticles(articles, links):
+def getFormattedArticles(articles, links):  #?(change from original is to have links added in metadata)
     print("Formatting articles...")
     formArt = []
     for i, a in enumerate(progressbar.progressbar(articles)):
        
-        content = a.findAll("p")   #what is this for? 
-        
-        if(not content):
+        content = a.findAll("p")   # Find all <p> tags in the article
+        if(not content):           # If no <p> tags are found, skip the article
             print("Nothing here")
             continue
         
-        #save_soup_to_file(content, f"filtered/content_{i}.html")
+        #check if article is reserved for paid subscribers, if yes skip
+        pro_link = a.find('a', {'class': 'ProPill-proPillLink', 'data-type': 'pro-button'}) #common line in all paid articles
+        if pro_link:
+            print("Article reserved for paid subscribers. Skipping...")
+            continue
+        
 
         #extract content and clean
-        content      = clean_content(content)
-        #save_soup_to_file(content, f"cleaned/wholeText_{i}.html")
+        content      = clean_content(content)  # Clean the content and keep only the wanted core text
         code         = content.rfind("});")
         if(code > 0):            
             content = content[code:]
@@ -185,7 +214,7 @@ if __name__ == '__main__':
     links   = []
     for y in years:
         for m in months[-1:]:
-            for d in range(10,13):
+            for d in range(10,11):
                 print('------------------------')
                 print(f'CURRENT PAGE : {y}/{m}/{d}')
                 print('------------------------')
