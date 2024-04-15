@@ -12,7 +12,7 @@ import sys
 #----------------------------------------- 
 def saveToMongo(collName, data):  
     clt  = MongoClient('localhost', 27017)
-    db   = clt['PhDData']
+    db   = clt['CrawlerArticles']
     coll = db[collName]
     coll.insert_many(data)
 
@@ -26,6 +26,19 @@ def getBs4ElementOrEmptyString(soup, tag, values):
     except IndexError:
         print("IndexError l 27")
         return ""
+
+def extract_title(soup):
+    
+    
+    # Find the <meta> tag with property='og:title'
+    meta_tag = soup.find('meta', property='og:title')
+    
+    # Extract the content attribute if the meta tag is found
+    if meta_tag and meta_tag.has_attr('content'):
+        return meta_tag['content']
+    else:
+        # Return a default or empty string if no title is found
+        return "No title found"
 
 def requestLinkWithRetry(link):
     res = None
@@ -55,15 +68,15 @@ def clean_content(tags):
 #Crawler functions   
 #-----------------------------------------     
         
-def getPage(y, m):
+def getPage(y, month, d):
     print("Getting the full page...")
-    URL = 'https://www.cnbc.com/site-map/articles/2023/January/1/'
+    URL = f'https://www.cnbc.com/site-map/articles/{y}/{month}/{d}/'
     page = requestLinkWithRetry(URL)    
     soup = BeautifulSoup(page.content, 'html.parser')
     return soup
     
 def getArticlesLinks(soup):
-	save_soup_to_file(soup, "soupIndex.html")
+	#save_soup_to_file(soup, "soupIndex.html")
 	
 	links = []
 	ul = soup.findAll("a", {"class": 'SiteMapArticleList-link'})   
@@ -72,7 +85,7 @@ def getArticlesLinks(soup):
 	print("Nombre d'article trouvé : ", len(ul))
 	for a in ul:  # Iterate directly over each 'a' element found
 		links.append(a['href'])
-	save_soup_to_file(links, "links.html")
+	#save_soup_to_file(links, "links.html")
 	return links
 	
 def getArticlesFromLinks(links):
@@ -90,12 +103,38 @@ def getArticlesFromLinks(links):
             soups.append(BeautifulSoup(result.content, 'html.parser'))
     
     #save individual soup in soup repository
-    saveSoupsToRepo(soups, "soups", "soup")
+    #saveSoupsToRepo(soups, "soups", "soup")
     return soups
 
-
+def extract_author(soup):
+    # Create a BeautifulSoup object
     
-def getFormattedArticles(articles):
+    # Find the <meta> tag with name='author'
+    meta_tag = soup.find('meta', attrs={'name': 'author'})
+    
+    # Extract the content attribute if the meta tag is found
+    if meta_tag and meta_tag.has_attr('content'):
+        return meta_tag['content']
+    else:
+        # Return a default or empty string if no author is found
+        return "No author found"
+    
+def extract_date(soup):
+    # Find the <meta> tag with itemprop='dateCreated'
+    meta_tag = soup.find('meta', itemprop='dateCreated')
+    
+    if meta_tag and meta_tag.has_attr('content'):
+        # Parse the date string
+        date_string = meta_tag['content']
+        # Parse the date using datetime
+        date_obj = datetime.datetime.strptime(date_string, '%Y-%m-%dT%H:%M:%S%z')
+        # Format the date as 'YYYY/MM/DD'
+        formatted_date = date_obj.strftime('%Y/%m/%d')
+        return formatted_date
+    else:
+        return "No date found"
+    
+def getFormattedArticles(articles, links):
     print("Formatting articles...")
     formArt = []
     for i, a in enumerate(progressbar.progressbar(articles)):
@@ -106,36 +145,30 @@ def getFormattedArticles(articles):
             print("Nothing here")
             continue
         
-        save_soup_to_file(content, f"filtered/content_{i}.html")
+        #save_soup_to_file(content, f"filtered/content_{i}.html")
 
         #extract content and clean
         content      = clean_content(content)
-        save_soup_to_file(content, f"cleaned/wholeText_{i}.html")
+        #save_soup_to_file(content, f"cleaned/wholeText_{i}.html")
         code         = content.rfind("});")
         if(code > 0):            
             content = content[code:]
         editorec = content.rfind("Editors' Recommendations")
         if(editorec > 0):            
             content = content[0:editorec]
+
             
         #extract various meta data
-        author      = getBs4ElementOrEmptyString(a,"a", {"class": "author"})
-        title       = getBs4ElementOrEmptyString(a,"h1", {"class": "b-headline__title"})
-        type        = getBs4ElementOrEmptyString(a,"div", {"class": "b-headline__crumbs"})
-                
-        #extract and format time data
-        time        = a.findAll("time", {"class": "b-byline__time"})
-        if(len(time)>0):
-            time = time[0]
-        else:
-            continue
-        time        = datetime.datetime.strptime(time["datetime"][0:-6], '%Y-%m-%dT%H:%M:%S')
-        date        = f'{time.year}-{time.month}-{time.day}'
+        author      = extract_author(a)
+        title       = extract_title(a)
+        type        = "CNBC Business Article"
+        date        = extract_date(a)
         
         #format data for storage
         metaData    = {"author":author.replace("\n",""),
                         "title":title.replace("\n",""),
-                        "type":type.replace("\n","")}
+                        "type":type.replace("\n",""), 
+                        "URL":links[i]}
         formArt.append({"date":date,"metaData":metaData,"txt":content})
     return formArt
 
@@ -146,25 +179,26 @@ if __name__ == '__main__':
 
     #set crawl time period
     years   = [str(y) for y in range(2023,2024)]
-    months  = [str(m) for m in range(12,13)]
+    months  = ["January","February","March","April","May","June","July","August","September","October","November","December"]
     
     #Crawl main loop
     links   = []
     for y in years:
-        for m in months:
-            print('------------------------')
-            print(f'CURRENT PAGE : {y}/{m}')
-            print('------------------------')
+        for m in months[-1:]:
+            for d in range(10,13):
+                print('------------------------')
+                print(f'CURRENT PAGE : {y}/{m}/{d}')
+                print('------------------------')
 
-            page     = getPage(y,m)
-            links    = getArticlesLinks(page) 
+                page     = getPage(y,m,d)
+                links    = getArticlesLinks(page) 
 
-            if(len(links) == 0):
-                print("Nothing here")
-                continue
-            articles = getArticlesFromLinks(links)
-            formArt  = getFormattedArticles(articles)
-            if(len(formArt) > 0):
-                saveToMongo("CNBC",formArt)     
+                if(len(links) == 0):
+                    print("Nothing here")
+                    continue
+                articles = getArticlesFromLinks(links)
+                formArt  = getFormattedArticles(articles, links)
+                if(len(formArt) > 0):
+                    saveToMongo("CNBC",formArt)     
                 
                 
