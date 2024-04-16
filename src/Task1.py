@@ -1,6 +1,6 @@
 import re
 from datasets import load_dataset
-from pyspark.sql import SparkSession
+from pyspark.sql import SparkSession 
 import time
 import matplotlib.pyplot as plt
 
@@ -50,7 +50,7 @@ plt.ylabel('Number of Occurrences')
 plt.title('Top 20 Most Frequent Words')
 plt.xticks(rotation=45, ha='right')
 plt.tight_layout()
-# plt.show()
+plt.show()
 
 # Print the time taken for MapReduce operation
 print("\n\n------------------ Timer ------------------")
